@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 import abc
 import json
@@ -8,7 +7,7 @@ import logging
 import hashlib
 import uuid
 from optparse import OptionParser
-from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -35,64 +34,102 @@ GENDERS = {
     FEMALE: "female",
 }
 
+class Field:
 
-class CharField(object):
-    pass
+    def __init__(self, required, nullable):
+        self.required = required
+        self.nullable = nullable
 
 
-class ArgumentsField(object):
-    pass
+class CharField(Field):
+
+    def __init__(self, required, nullable):
+        super().__init__(self, required, nullable)
+
+
+class ArgumentsField(Field):
+
+    def __init__(self, required, nullable):
+        super().__init__(self, required, nullable)
 
 
 class EmailField(CharField):
-    pass
+
+    def __init__(self, required, nullable):
+        super().__init__(self, required, nullable)
 
 
-class PhoneField(object):
-    pass
+class PhoneField(Field):
+
+    def __init__(self, required, nullable):
+        super().__init__(self, required, nullable)
 
 
-class DateField(object):
-    pass
+class DateField(Field):
+
+    def __init__(self, required, nullable):
+        super().__init__(self, required, nullable)
 
 
-class BirthDayField(object):
-    pass
+class BirthDayField(Field):
+
+    def __init__(self, required, nullable):
+        super().__init__(self, required, nullable)
 
 
-class GenderField(object):
-    pass
+class GenderField(Field):
+
+    def __init__(self, required, nullable):
+        super().__init__(self, required, nullable)
 
 
-class ClientIDsField(object):
-    pass
+class ClientIDsField(Field):
+
+    def __init__(self, required, nullable):
+        super().__init__(self, required, nullable)
 
 
-class ClientsInterestsRequest(object):
-    client_ids = ClientIDsField(required=True)
-    date = DateField(required=False, nullable=True)
+class MethodRequest:
 
-
-class OnlineScoreRequest(object):
-    first_name = CharField(required=False, nullable=True)
-    last_name = CharField(required=False, nullable=True)
-    email = EmailField(required=False, nullable=True)
-    phone = PhoneField(required=False, nullable=True)
-    birthday = BirthDayField(required=False, nullable=True)
-    gender = GenderField(required=False, nullable=True)
-
-
-class MethodRequest(object):
-    account = CharField(required=False, nullable=True)
-    login = CharField(required=True, nullable=True)
-    token = CharField(required=True, nullable=True)
-    arguments = ArgumentsField(required=True, nullable=True)
-    method = CharField(required=True, nullable=False)
+    def __init__(self):
+        self.account = CharField(required=False, nullable=True)
+        self.login = CharField(required=True, nullable=True)
+        self.token = CharField(required=True, nullable=True)
+        self.arguments = ArgumentsField(required=True, nullable=True)
+        self.method = CharField(required=True, nullable=False)
 
     @property
     def is_admin(self):
         return self.login == ADMIN_LOGIN
 
+    def method_handler(self):
+        pass
+
+
+class ClientsInterestsRequest(MethodRequest):
+
+    def __init__(self):
+        super().__init__(self)
+        self.client_ids = ClientIDsField(required=True)
+        self.date = DateField(required=False, nullable=True)
+
+    def method_handler(self):
+        pass
+
+
+class OnlineScoreRequest(MethodRequest):
+
+    def __init__(self):
+        super().__init__(self)
+        self.first_name = CharField(required=False, nullable=True)
+        self.last_name = CharField(required=False, nullable=True)
+        self.email = EmailField(required=False, nullable=True)
+        self.phone = PhoneField(required=False, nullable=True)
+        self.birthday = BirthDayField(required=False, nullable=True)
+        self.gender = GenderField(required=False, nullable=True)
+
+    def method_handler(self):
+        pass
 
 def check_auth(request):
     if request.is_admin:
@@ -111,7 +148,7 @@ def method_handler(request, ctx, store):
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
     router = {
-        "method": method_handler
+        'method': method_handler
     }
     store = None
 
@@ -134,7 +171,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
             if path in self.router:
                 try:
                     response, code = self.router[path]({"body": request, "headers": self.headers}, context, self.store)
-                except Exception, e:
+                except Exception as e:
                     logging.exception("Unexpected error: %s" % e)
                     code = INTERNAL_ERROR
             else:
