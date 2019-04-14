@@ -2,7 +2,7 @@
 
 import abc
 import json
-import datetime
+from datetime import datetime
 import logging
 import hashlib
 import uuid
@@ -13,6 +13,8 @@ SALT = 'Otus'
 ADMIN_LOGIN = 'admin'
 ADMIN_SALT = '42'
 OK = 200
+YEAR = 31536000
+AGE = 70
 BAD_REQUEST = 400
 FORBIDDEN = 403
 NOT_FOUND = 404
@@ -52,7 +54,7 @@ class Field:
     def nullable(self):
         return self._nullable
 
-    # def validation(self):
+    # def validate(self):
     #     if self._required:
     #         if self._nullable:
     #             return True
@@ -64,7 +66,7 @@ class Field:
     #     else:
     #         return True
 
-    def validation(self):
+    def validate(self):
         raise NotImplementedError
 
     @property
@@ -80,15 +82,13 @@ class Field:
         self._value = value
 
 
-
 class CharField(Field):
 
     def __init__(self, required, nullable, key, value):
         super().__init__(self, required, nullable, key, value)
 
-    def validation(self):
+    def validate(self):
         return isinstance(self.value, str)
-
 
 
 class ArgumentsField(Field):
@@ -96,16 +96,21 @@ class ArgumentsField(Field):
     def __init__(self, required, nullable, key, value):
         super().__init__(self, required, nullable, key, value)
 
-
+    def validate(self):
+        try:
+            arguments = json.load(self.value)
+        except ValueError as e:
+            logging.exception(e)
+            return False
+        return isinstance(arguments, dict)
 
 class EmailField(CharField):
 
     def __init__(self, required, nullable, key, value):
         super().__init__(self, required, nullable, 'email', value)
 
-    def validation(self):
-        return super().validation() and '@' in self.value
-
+    def validate(self):
+        return super().validate() and '@' in self.value
 
 
 class PhoneField(Field):
@@ -113,30 +118,44 @@ class PhoneField(Field):
     def __init__(self, required, nullable):
         super().__init__(self, required, nullable)
 
-    def validation(self):
+    def validate(self):
         if isinstance(self.value, str) or isinstance(self.value, int):
-            pass
+            if len(str(self.value)) == 11 and str(self.value)[0] == '7':
+                return False
+            else:
+                return True
         else:
             return False
 
-class DateField(Field):
+
+class DateField(CharField):
 
     def __init__(self, required, nullable):
         super().__init__(self, required, nullable)
 
+    def validate(self):
+        if super().validate() is False:
+            return False
+        try:
+            datetime.strptime(self.value, '%d.%m.%Y')
+        except ValueError:
+            logging.error('Incorrect data format, should be DD.MM.YYYY')
+            return False
+        return True
 
-class BirthDayField(CharField):
+
+class BirthDayField(DateField):
 
     def __init__(self, required, nullable, key, value):
         super().__init__(self, required, nullable, 'birthday', value)
 
-    def validation(self):
-        if super().validation() is False:
+    def validate(self):
+        if super().validate() is False:
             return False
-        try:
-            datetime.datetime.strptime(self.value, '%d.%m.%Y')
-        except ValueError:
-            logging.error('Incorrect data format, should be DD.MM.YYYY')
+
+        date = datetime.strptime(self.value, '%d.%m.%Y')
+        now = datetime.now()
+        if now - date > datetime.fromtimestamp(YEAR*AGE):
             return False
         return True
 
@@ -146,7 +165,7 @@ class GenderField(Field):
     def __init__(self, required, nullable):
         super().__init__(self, required, nullable)
 
-    def validation(self):
+    def validate(self):
         return isinstance(self.value, int) and self.value in GENDERS
 
 
@@ -154,6 +173,15 @@ class ClientIDsField(Field):
 
     def __init__(self, required, nullable):
         super().__init__(self, required, nullable)
+
+    def validate(self):
+        if isinstance(self.value, list):
+            for client_id in self.value:
+                if isinstance(client_id, int) is False:
+                    return False
+        else:
+            return False
+        return True
 
 
 class MethodRequest:
@@ -171,22 +199,22 @@ class MethodRequest:
 
     def _check_auth(self):
         if self._is_admin:
-            digest = hashlib.sha512(datetime.datetime.now().strftime('%Y%m%d%H') + ADMIN_SALT).hexdigest()
+            digest = hashlib.sha512(datetime.now().strftime('%Y%m%d%H') + ADMIN_SALT).hexdigest()
         else:
             digest = hashlib.sha512(self.account + self.login + SALT).hexdigest()
         if digest == self.token:
             return True
         return False
 
-    def _validation(self):
+    def _validate(self):
         pass
 
     def handler(self):
         self._check_auth()
-        self._validation()
+        self._validate()
         self.method_handler()
 
-    def validation(self):
+    def validate(self):
         raise NotImplementedError
 
     def post(self):
@@ -204,7 +232,7 @@ class ClientsInterestsRequest(MethodRequest):
         if self.check_auth():
             pass
 
-    def validation(self):
+    def validate(self):
         pass
 
 class OnlineScoreRequest(MethodRequest):
@@ -224,7 +252,7 @@ class OnlineScoreRequest(MethodRequest):
 
 def check_auth(request):
     if request.is_admin:
-        digest = hashlib.sha512(datetime.datetime.now().strftime('%Y%m%d%H') + ADMIN_SALT).hexdigest()
+        digest = hashlib.sha512(datetime.now().strftime('%Y%m%d%H') + ADMIN_SALT).hexdigest()
     else:
         digest = hashlib.sha512(request.account + request.login + SALT).hexdigest()
     if digest == request.token:
