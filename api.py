@@ -104,6 +104,7 @@ class ArgumentsField(Field):
             return False
         return isinstance(arguments, dict)
 
+
 class EmailField(CharField):
 
     def __init__(self, required, nullable, key, value):
@@ -184,7 +185,42 @@ class ClientIDsField(Field):
         return True
 
 
-class MethodRequest:
+class Request:
+
+    def __init__(self, request):
+        self._fields = {}
+
+    def __call__(self, request):
+        if check_auth() is False:
+            raise Exception(ERRORS[FORBIDDEN])
+        self.parse(request['body']['arguments'])
+        if self.validate(request['body']['arguments']) is False:
+            raise Exception(ERRORS[INVALID_REQUEST])
+        return self.method_handler()
+
+    def add_field(self, key, value):
+        self._fields[key] = value
+
+    def parse(self, arguments):
+        for key, value in self._fields:
+            if key in arguments:
+                value = arguments[key]
+
+    def validate(self, arguments):
+        for key, value in self._fields:
+            if value.required:
+                if key not in arguments:
+                    return False
+            if value.nullable is False and key in arguments and arguments[key] is None:
+                return False
+        for key, value in self._fields:
+            if key in arguments and value.validate() is False:
+                return False
+
+    def method_handler(self, request):
+        raise NotImplementedError
+
+class MethodRequest(Request):
 
     def __init__(self):
         self.account = CharField(required=False, nullable=True)
@@ -229,8 +265,11 @@ class ClientsInterestsRequest(MethodRequest):
         self.date = DateField(required=False, nullable=True)
 
     def method_handler(self, request, ctx, store):
-        if self.check_auth():
-            pass
+        if check_auth() is False:
+            raise Exception(ERRORS[FORBIDDEN])
+        self.check(request['body'])
+        self.parse(request['body'])
+        self.validate()
 
     def validate(self):
         pass
@@ -246,8 +285,11 @@ class OnlineScoreRequest(MethodRequest):
         self.birthday = BirthDayField(required=False, nullable=True)
         self.gender = GenderField(required=False, nullable=True)
 
+    def __call__(self):
+        self.method_handler()
+
     def method_handler(self, request, ctx, store):
-        pass
+        super().method_handler()
 
 
 def check_auth(request):
@@ -262,6 +304,10 @@ def check_auth(request):
 
 def method_handler(request, ctx, store):
     response, code = None, None
+    handlers = {'scoring': OnlineScoreRequest,
+                'clients_interests': ClientsInterestsRequest}
+    if request['body']['method'] in handlers:
+        response, code = handlers[request['body']['method']]()
     return response, code
 
 
