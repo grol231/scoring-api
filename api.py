@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-import abc
 import json
 from datetime import datetime
 import logging
@@ -8,6 +7,7 @@ import hashlib
 import uuid
 from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import scoring
 
 SALT = 'Otus'
 ADMIN_LOGIN = 'admin'
@@ -53,18 +53,6 @@ class Field:
     @property
     def nullable(self):
         return self._nullable
-
-    # def validate(self):
-    #     if self._required:
-    #         if self._nullable:
-    #             return True
-    #         else:
-    #             if self.value:
-    #                 return True
-    #             else:
-    #                 return False
-    #     else:
-    #         return True
 
     def validate(self):
         raise NotImplementedError
@@ -186,74 +174,73 @@ class ClientIDsField(Field):
 
 
 class Request:
+    class Fields:
+        def __init__(self):
+            self._fields = []
 
-    def __init__(self, request):
-        self._fields = {}
+        def __getitem__(self, key):
+            return self._fields[key]
 
-    def __call__(self, request):
+        def __setitem__(self, key, value):
+            self._fields[key] = value
+
+    def __init__(self):
+        self.fields = Request.Fields()
+
+    def __call__(self, request, context):
         if check_auth() is False:
             raise Exception(ERRORS[FORBIDDEN])
-        self.parse(request['body']['arguments'])
-        if self.validate(request['body']['arguments']) is False:
+        self._parse(request['body']['arguments'])
+        if self._validate(request['body']['arguments']) is False:
             raise Exception(ERRORS[INVALID_REQUEST])
-        return self.method_handler()
-
-    def add_field(self, key, value):
-        self._fields[key] = value
+        return self.method_handler(request, context)
 
     def parse(self, arguments):
-        for key, value in self._fields:
+        for key, value in self.fields:
             if key in arguments:
-                value = arguments[key]
+                self.fields[key] = arguments[key]
 
     def validate(self, arguments):
-        for key, value in self._fields:
-            if value.required:
-                if key not in arguments:
-                    return False
-            if value.nullable is False and key in arguments and arguments[key] is None:
+        for key, value in self.fields:
+            if value.required and key not in arguments \
+                    or \
+                    value.nullable is False and key in arguments and arguments[key] is None \
+                    or \
+                    key in arguments and value.validate() is False:
                 return False
-        for key, value in self._fields:
-            if key in arguments and value.validate() is False:
-                return False
+        return True
 
-    def method_handler(self, request):
+    def method_handler(self, request, ctx, store):
         raise NotImplementedError
+
+    @property
+    def is_admin(self):
+        raise NotImplementedError
+
 
 class MethodRequest(Request):
 
     def __init__(self):
-        self.account = CharField(required=False, nullable=True)
-        self.login = CharField(required=True, nullable=True)
-        self.token = CharField(required=True, nullable=True)
-        self.arguments = ArgumentsField(required=True, nullable=True)
-        self.method = CharField(required=True, nullable=False)
+        super().__init__(self)
+        self.fields['account'] = CharField(required=False, nullable=True)
+        self.fields['login'] = CharField(required=True, nullable=True)
+        self.fields['token'] = CharField(required=True, nullable=True)
+        self.fields['arguments'] = ArgumentsField(required=True, nullable=True)
+        self.fields['method'] = CharField(required=True, nullable=False)
+
+    def __call__(self, request, ctx, store):
+        if check_auth() is False:
+            raise Exception(ERRORS[FORBIDDEN])
+        self.parse(request['body'])
+        if self.validate(request['body']) is False:
+            raise Exception(ERRORS[INVALID_REQUEST])
+        return self.method_handler(request, ctx, store)
 
     @property
-    def _is_admin(self):
-        return self.login == ADMIN_LOGIN
+    def is_admin(self):
+        return self.fields['login'] == ADMIN_LOGIN
 
-    def _check_auth(self):
-        if self._is_admin:
-            digest = hashlib.sha512(datetime.now().strftime('%Y%m%d%H') + ADMIN_SALT).hexdigest()
-        else:
-            digest = hashlib.sha512(self.account + self.login + SALT).hexdigest()
-        if digest == self.token:
-            return True
-        return False
-
-    def _validate(self):
-        pass
-
-    def handler(self):
-        self._check_auth()
-        self._validate()
-        self.method_handler()
-
-    def validate(self):
-        raise NotImplementedError
-
-    def post(self):
+    def method_handler(self, request, ctx, store):
         raise NotImplementedError
 
 
@@ -261,35 +248,38 @@ class ClientsInterestsRequest(MethodRequest):
 
     def __init__(self):
         super().__init__(self)
-        self.client_ids = ClientIDsField(required=True)
-        self.date = DateField(required=False, nullable=True)
+        self.fields['client_ids'] = ClientIDsField(required=True)
+        self.fields['date'] = DateField(required=False, nullable=True)
 
     def method_handler(self, request, ctx, store):
-        if check_auth() is False:
-            raise Exception(ERRORS[FORBIDDEN])
-        self.check(request['body'])
-        self.parse(request['body'])
-        self.validate()
+        response = {}
+        ctx['nclients'] = len(self.fields['client_ids'])
+        for cid in self.fields['client_ids']:
+            response[cid] = scoring.get_interests(store, cid)
+        return response
 
-    def validate(self):
-        pass
 
 class OnlineScoreRequest(MethodRequest):
 
     def __init__(self):
         super().__init__()
-        self.first_name = CharField(required=False, nullable=True)
-        self.last_name = CharField(required=False, nullable=True)
-        self.email = EmailField(required=False, nullable=True)
-        self.phone = PhoneField(required=False, nullable=True)
-        self.birthday = BirthDayField(required=False, nullable=True)
-        self.gender = GenderField(required=False, nullable=True)
-
-    def __call__(self):
-        self.method_handler()
+        self.fields['first_name'] = CharField(required=False, nullable=True)
+        self.fields['last_name'] = CharField(required=False, nullable=True)
+        self.fields['email'] = EmailField(required=False, nullable=True)
+        self.fields['phone'] = PhoneField(required=False, nullable=True)
+        self.fields['birthday'] = BirthDayField(required=False, nullable=True)
+        self.fields['gender'] = GenderField(required=False, nullable=True)
 
     def method_handler(self, request, ctx, store):
-        super().method_handler()
+        ctx['has'] = []
+        for key, value in self.fields:
+            if value is not None:
+                ctx['has'].append(value)
+        if self.is_admin:
+            return ADMIN_SALT
+        else:
+            return scoring.get_score(store, self.phone, self.email, self.birthday, self.gender, self.first_name,
+                                     self.last_name)
 
 
 def check_auth(request):
@@ -307,7 +297,7 @@ def method_handler(request, ctx, store):
     handlers = {'scoring': OnlineScoreRequest,
                 'clients_interests': ClientsInterestsRequest}
     if request['body']['method'] in handlers:
-        response, code = handlers[request['body']['method']]()
+        response, code = handlers[request['body']['method']](request, ctx, store)
     return response, code
 
 
@@ -321,9 +311,6 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
     def get_request_id(headers):
         return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)
 
-    def get_field_list(self, request):
-        return []
-
     def do_post(self):
         response, code = {}, OK
         context = {'request_id': self.get_request_id(self.headers)}
@@ -331,7 +318,8 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
         try:
             data_string = self.rfile.read(int(self.headers['Content-Length']))
             request = json.loads(data_string)
-        except:
+        except Exception as e:
+            logging.exception(e)
             code = BAD_REQUEST
 
         if request:
