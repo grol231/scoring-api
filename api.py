@@ -187,13 +187,13 @@ class Request:
     def __init__(self):
         self.fields = Request.Fields()
 
-    def __call__(self, request, context):
+    def __call__(self, data, ctx, store):
         if check_auth() is False:
             raise Exception(ERRORS[FORBIDDEN])
-        self._parse(request['body']['arguments'])
-        if self._validate(request['body']['arguments']) is False:
+        self._parse(data)
+        if self._validate(data) is False:
             raise Exception(ERRORS[INVALID_REQUEST])
-        return self.method_handler(request, context)
+        return self.method_handler(data, ctx, store)
 
     def parse(self, arguments):
         for key, value in self.fields:
@@ -236,6 +236,8 @@ class MethodRequest(Request):
             raise Exception(ERRORS[INVALID_REQUEST])
         return self.method_handler(request, ctx, store)
 
+
+
     @property
     def is_admin(self):
         return self.fields['login'] == ADMIN_LOGIN
@@ -244,14 +246,18 @@ class MethodRequest(Request):
         raise NotImplementedError
 
 
-class ClientsInterestsRequest(MethodRequest):
+class ClientsInterestsRequest(Request):
 
     def __init__(self):
         super().__init__(self)
+        self._request = MethodRequest()
         self.fields['client_ids'] = ClientIDsField(required=True)
         self.fields['date'] = DateField(required=False, nullable=True)
 
-    def method_handler(self, request, ctx, store):
+    def __call__(self, request, ctx, store):
+        self._request
+
+    def method_handler(self, data, ctx, store):
         response = {}
         ctx['nclients'] = len(self.fields['client_ids'])
         for cid in self.fields['client_ids']:
@@ -259,7 +265,7 @@ class ClientsInterestsRequest(MethodRequest):
         return response
 
 
-class OnlineScoreRequest(MethodRequest):
+class OnlineScoreRequest(Request):
 
     def __init__(self):
         super().__init__()
@@ -270,7 +276,7 @@ class OnlineScoreRequest(MethodRequest):
         self.fields['birthday'] = BirthDayField(required=False, nullable=True)
         self.fields['gender'] = GenderField(required=False, nullable=True)
 
-    def method_handler(self, request, ctx, store):
+    def method_handler(self, data, ctx, store):
         ctx['has'] = []
         for key, value in self.fields:
             if value is not None:
