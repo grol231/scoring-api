@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 import abc
 import json
@@ -8,7 +7,7 @@ import logging
 import hashlib
 import uuid
 from optparse import OptionParser
-from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -36,11 +35,11 @@ GENDERS = {
 }
 
 
-class CharField(object):
+class CharField():
     pass
 
 
-class ArgumentsField(object):
+class ArgumentsField():
     pass
 
 
@@ -48,32 +47,32 @@ class EmailField(CharField):
     pass
 
 
-class PhoneField(object):
+class PhoneField():
     pass
 
 
-class DateField(object):
+class DateField():
     pass
 
 
-class BirthDayField(object):
+class BirthDayField():
     pass
 
 
-class GenderField(object):
+class GenderField():
     pass
 
 
-class ClientIDsField(object):
+class ClientIDsField():
     pass
 
 
-class ClientsInterestsRequest(object):
+class ClientsInterestsRequest():
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
 
 
-class OnlineScoreRequest(object):
+class OnlineScoreRequest():
     first_name = CharField(required=False, nullable=True)
     last_name = CharField(required=False, nullable=True)
     email = EmailField(required=False, nullable=True)
@@ -82,7 +81,7 @@ class OnlineScoreRequest(object):
     gender = GenderField(required=False, nullable=True)
 
 
-class MethodRequest(object):
+class MethodRequest():
     account = CharField(required=False, nullable=True)
     login = CharField(required=True, nullable=True)
     token = CharField(required=True, nullable=True)
@@ -134,7 +133,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
             if path in self.router:
                 try:
                     response, code = self.router[path]({"body": request, "headers": self.headers}, context, self.store)
-                except Exception, e:
+                except Exception as e:
                     logging.exception("Unexpected error: %s" % e)
                     code = INTERNAL_ERROR
             else:
