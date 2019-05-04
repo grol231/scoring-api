@@ -28,10 +28,11 @@ class TestSuite(unittest.TestCase):
 
     def set_valid_auth(self, request):
         if request.get("login") == api.ADMIN_LOGIN:
-            request["token"] = hashlib.sha512(datetime.datetime.now().strftime("%Y%m%d%H") + api.ADMIN_SALT).hexdigest()
+            request["token"] = hashlib.sha512(
+                bytes(datetime.datetime.now().strftime("%Y%m%d%H") + api.ADMIN_SALT, 'utf-8')).hexdigest()
         else:
             msg = request.get("account", "") + request.get("login", "") + api.SALT
-            request["token"] = hashlib.sha512(msg).hexdigest()
+            request["token"] = hashlib.sha512(bytes(msg, 'utf-8')).hexdigest()
 
     def test_empty_request(self):
         _, code = self.get_response({})
@@ -113,7 +114,7 @@ class TestSuite(unittest.TestCase):
         {"client_ids": [], "date": "20.07.2017"},
         {"client_ids": {1: 2}, "date": "20.07.2017"},
         {"client_ids": ["1", "2"], "date": "20.07.2017"},
-        {"client_ids": [1, 2], "date": "XXX"},
+        {"client_ids": [1, 2], "date": "XXX"}
     ])
     def test_invalid_interests_request(self, arguments):
         request = {"account": "horns&hoofs", "login": "h&f", "method": "clients_interests", "arguments": arguments}
@@ -125,7 +126,7 @@ class TestSuite(unittest.TestCase):
     @cases([
         {"client_ids": [1, 2, 3], "date": datetime.datetime.today().strftime("%d.%m.%Y")},
         {"client_ids": [1, 2], "date": "19.07.2017"},
-        {"client_ids": [0]},
+        {"client_ids": [0]}
     ])
     def test_ok_interests_request(self, arguments):
         request = {"account": "horns&hoofs", "login": "h&f", "method": "clients_interests", "arguments": arguments}
