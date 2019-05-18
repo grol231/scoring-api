@@ -38,11 +38,16 @@ GENDERS = {
 
 
 class Field:
-
     def __init__(self, required, nullable=False):
         self.required = required
         self.nullable = nullable
         self.value = None
+
+    def __get__(self, obj, objtype=None):
+        return self.value
+
+    def __set__(self, obj, value):
+        self.value = value
 
     def __add__(self, field):
         return self.value + field.value
@@ -50,35 +55,29 @@ class Field:
     def __eq__(self, other):
         return self.value == other
 
+    def is_required(self):
+        return self.required
+
+    def is_nullable(self):
+        return self.nullable
+
     def validate(self):
         raise NotImplementedError("you need to define a validate method")
 
 
 class CharField(Field):
-
-    def __init__(self, required, nullable):
-        super().__init__(required, nullable)
-
     def validate(self):
         if isinstance(self.value, str) is False:
             raise ValueError('char field is not str')
 
 
 class ArgumentsField(Field):
-
-    def __init__(self, required, nullable):
-        super().__init__(required, nullable)
-
     def validate(self):
         if isinstance(self.value, dict) is False:
             raise ValueError('arguments field is not dict')
 
 
 class EmailField(CharField):
-
-    def __init__(self, required, nullable):
-        super().__init__(required, nullable)
-
     def validate(self):
         super().validate()
         if '@' not in self.value:
@@ -86,10 +85,6 @@ class EmailField(CharField):
 
 
 class PhoneField(Field):
-
-    def __init__(self, required, nullable):
-        super().__init__(required, nullable)
-
     def validate(self):
         if (isinstance(self.value, str) or isinstance(self.value, int)) is False:
             raise ValueError('phone field is not str or int')
@@ -100,10 +95,6 @@ class PhoneField(Field):
 
 
 class DateField(CharField):
-
-    def __init__(self, required, nullable):
-        super().__init__(required, nullable)
-
     def validate(self):
         super().validate()
         try:
@@ -113,10 +104,6 @@ class DateField(CharField):
 
 
 class BirthDayField(DateField):
-
-    def __init__(self, required, nullable):
-        super().__init__(required, nullable)
-
     def validate(self):
         super().validate()
         date = datetime.datetime.strptime(self.value, '%d.%m.%Y')
@@ -127,10 +114,6 @@ class BirthDayField(DateField):
 
 
 class GenderField(Field):
-
-    def __init__(self, required, nullable):
-        super().__init__(required, nullable)
-
     def validate(self):
         if isinstance(self.value, int) is False:
             raise ValueError('gender field must be int')
@@ -139,10 +122,6 @@ class GenderField(Field):
 
 
 class ClientIDsField(Field):
-
-    def __init__(self, required):
-        super().__init__(required)
-
     def validate(self):
         if isinstance(self.value, list) is False:
             raise ValueError('client ids field must be list')
@@ -154,48 +133,69 @@ class ClientIDsField(Field):
 
 
 class MetaRequest(type):
-
     def __new__(mcs, name, base, attrs):
         fields = {}
         for key, value in attrs.items():
             if isinstance(value, Field):
                 fields[key] = value
         attrs['fields'] = fields
-        attrs['parse'] = mcs.parse
-        attrs['validate'] = mcs.validate
         return type.__new__(mcs, name, base, attrs)
 
-    def parse(cls, body):
-        for key in cls.fields:
-            if cls.fields[key].required and key not in body:
-                raise KeyError('invalid request: required field {}'.format(key))
-            if cls.fields[key].nullable is False and key in body and (body[key] is None or len(body[key]) == 0):
+
+class BaseRequest:
+    def parse(self, body):
+        for key in self.fields:
+            if self.fields[key].required and key not in body:
+                raise ValueError('invalid request: required field {}'.format(key))
+            if self.fields[key].nullable is False and key in body and (body[key] is None or len(body[key]) == 0):
                 raise ValueError('invalid request: field {} must have value'.format(key))
             if key in body:
-                cls.fields[key].value = body[key]
+                self.fields[key] = body[key]
                 logging.info('{} : {}'.format(key, body[key]))
         logging.info('parse finished')
 
-    def validate(cls):
-        for key in cls.fields:
-            if cls.fields[key].value:
-                cls.fields[key].validate()
+    def validate(self):
+        for key in self.fields:
+            if self.fields[key]:
+                self.fields[key].validate()
         logging.info('validation finished')
 
 
-class ClientsInterestsRequest(metaclass=MetaRequest):
+class AuthMixin:
+    auth = None
+
+    @property
+    def auth(self):
+        return self.auth
+
+    @auth.setter
+    def auth(self, auth):
+        self.auth = auth
+
+    @property
+    def is_admin(self):
+        return self.auth if self.auth.is_admin else False
+
+
+class ClientsInterestsRequest(BaseRequest, AuthMixin, metaclass=MetaRequest):
     client_ids = ClientIDsField(required=True)
     date = DateField(required=False, nullable=True)
 
-    def process(self, request, ctx, store):
+    @classmethod
+    def from_raw_request(cls, request):
+        obj = cls()
+        obj.parse(request)
+        return obj
+
+    def handle(self, request, ctx, store):
         response = {}
-        ctx['nclients'] = len(self.client_ids.value)
-        for cid in self.client_ids.value:
+        ctx['nclients'] = len(self.client_ids)
+        for cid in self.client_ids:
             response[cid] = scoring.get_interests(store, cid)
         return response, OK
 
 
-class OnlineScoreRequest(metaclass=MetaRequest):
+class OnlineScoreRequest(BaseRequest, AuthMixin, metaclass=MetaRequest):
     first_name = CharField(required=False, nullable=True)
     last_name = CharField(required=False, nullable=True)
     email = EmailField(required=False, nullable=True)
@@ -203,25 +203,30 @@ class OnlineScoreRequest(metaclass=MetaRequest):
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
 
-    def __init__(self):
-        for key, field in self.fields.items():
-            field.value = None
+    #def __init__(self):
+     #   for key, field in self.fields.items():# this does not work!!!!!!!!!!!!!!!!!!!!!!111
+      #      field = None
+
+    @classmethod
+    def from_raw_request(cls, request):
+        obj = cls()
+        obj.parse(request['body']['arguments'])
+        obj.validate()
+        return obj
 
     def validate_dependencies(self):
-        if (self.phone.value is not None and self.email.value is not None\
-                or self.first_name.value is not None and self.last_name.value is not None\
-                or self.gender.value is not None and self.birthday.value is not None) is False:
+        if (self.phone is not None and self.email is not None\
+                or self.first_name is not None and self.last_name is not None\
+                or self.gender is not None and self.birthday is not None) is False:
             raise ValueError('invalid dependencies of online score method')
 
-    def process(self, request, ctx, store):
+    def handle(self, request, ctx, store):
         self.validate_dependencies()
         ctx['has'] = []
         for key, field in self.fields.items():
-            if field.value or isinstance(field.value, int) and field.value == 0:
+            if field or isinstance(field, int) and field == 0:
                 ctx['has'].append(key)
-        r = MethodRequest()
-        r.parse(request['body'])
-        if r.is_admin:
+        if request.is_admin:
             score = int(ADMIN_SALT)
         else:
             score = scoring.get_score(store, self.phone, self.email, self.birthday, self.gender, self.first_name,
@@ -230,12 +235,19 @@ class OnlineScoreRequest(metaclass=MetaRequest):
         return response, OK
 
 
-class MethodRequest(metaclass=MetaRequest):
+class MethodRequest(BaseRequest, metaclass=MetaRequest):
     account = CharField(required=False, nullable=True)
     login = CharField(required=True, nullable=True)
     token = CharField(required=True, nullable=True)
     arguments = ArgumentsField(required=True, nullable=True)
     method = CharField(required=True, nullable=False)
+
+    @classmethod
+    def from_raw_request(cls, request):
+        obj = cls()
+        obj.parse(request['body'])
+        obj.validate()
+        return obj
 
     @property
     def is_admin(self):
@@ -252,36 +264,56 @@ def check_auth(request):
     return False
 
 
+def online_score_handler(request, ctx, store):
+    request.validate_dependencies()
+    ctx['has'] = []
+    for key, field in request.fields.items():
+        if field or isinstance(field, int) and field == 0:
+            ctx['has'].append(key)
+    r = MethodRequest.from_raw_request(request)
+    if r.is_admin:
+        score = int(ADMIN_SALT)
+    else:
+        score = scoring.get_score(store, request.phone, request.email, request.birthday, request.gender, 
+                                  request.first_name, request.last_name)
+    response = {'score': score}
+    return response, OK
+
+
+def clients_interests_handler(request, ctx, store):
+    response = {}
+    ctx['nclients'] = len(request.client_ids)
+    for cid in request.client_ids:
+        response[cid] = scoring.get_interests(store, cid)
+    return response, OK
+
+
 def method_handler(request, ctx, store):
     try:
-        auth_request = MethodRequest()
-        auth_request.parse(request['body'])
-        auth_request.validate()
-        if check_auth(auth_request) is False:
-            response = ERRORS[FORBIDDEN]
-            code = FORBIDDEN
-            return response, code
-        handlers = {'online_score': OnlineScoreRequest,
-                    'clients_interests': ClientsInterestsRequest}
-        h = handlers[request['body']['method']]()
-        h.parse(request['body']['arguments'])
-        h.validate()
-        return h.process(request, ctx, store)
+        auth = MethodRequest.from_raw_request(request)
+        if check_auth(auth) is False:
+            return None, FORBIDDEN
+
+        methods = {
+            'online_score': {'request': OnlineScoreRequest, 'handler': online_score_handler},
+            'clients_interests': {'request': ClientsInterestsRequest, 'handler': clients_interests_handler}
+        }
+        url = request['body']['method']
+        if url in methods:
+            r = methods[url]['request'].from_raw_request(request)
+            r.auth = auth
+            return methods[url]['handler'](r, ctx, store)
+        else:
+            return None, NOT_FOUND
+
     except ValueError as e:
-        logging.exception(e)
-        response = ERRORS[INVALID_REQUEST]
-        code = INVALID_REQUEST
-        return response, code
-    except KeyError as e:
-        logging.exception(e)
-        response = ERRORS[INVALID_REQUEST]
-        code = INVALID_REQUEST
-        return response, code
-    except Exception as e:
-        logging.exception(e)
-        response = ERRORS[FORBIDDEN]
-        code = FORBIDDEN
-        return response, code
+        logging.exception(e) #TODO: must be error
+        return None, INVALID_REQUEST
+    # except Exception as e:
+    #     logging.exception(e)
+    #     response = ERRORS[FORBIDDEN]
+    #     code = FORBIDDEN
+    #     return response, code
 
 
 class MainHTTPHandler(BaseHTTPRequestHandler):
