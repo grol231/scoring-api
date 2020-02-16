@@ -12,5 +12,5 @@
 
 ## Запуск
 
-python3 scoring-api.py
+python3 api.py
 
